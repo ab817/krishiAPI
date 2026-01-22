@@ -1,15 +1,15 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, generics, permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
 
-from .models import VetRequest, AboutUs
+from .models import VetRequest, AboutUs, NewsArticle
 from .serializers import (
     SignupSerializer,
     VetRequestSerializer,
-    AboutUsSerializer
+    AboutUsSerializer, NewsArticleSerializer
 )
 from .permissions import IsAdminUserRole, IsNormalUserRole
 
@@ -116,3 +116,23 @@ class PasswordResetViewSet(viewsets.ViewSet):
 
         except User.DoesNotExist:
             return Response({"error": "Email not found"}, status=404)
+
+#newsarticle
+
+class NewsArticleViewSet(viewsets.ModelViewSet):
+    queryset = NewsArticle.objects.all().order_by('-date')
+    serializer_class = NewsArticleSerializer
+
+    def get_permissions(self):
+        # Anyone can view news
+        if self.action in ['list', 'retrieve']:
+            return [permissions.AllowAny()]
+        # Only admin can create/update/delete
+        return [permissions.IsAdminUser()]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if user.is_authenticated:
+            serializer.save(posted_by_user=user)
+        else:
+            serializer.save(posted_by_name="Admin")

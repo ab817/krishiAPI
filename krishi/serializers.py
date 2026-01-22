@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import VetRequest, AboutUs, UserProfile
+from .models import VetRequest, AboutUs, UserProfile, NewsArticle, AnimalType
 
 
 # --------------------------
@@ -38,11 +38,23 @@ class SignupSerializer(serializers.ModelSerializer):
         return user
 
 
-# --------------------------
-# Vet Request Serializer
-# --------------------------
+#Vetrequests
+class AnimalTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AnimalType
+        fields = ['id', 'animal_name', 'remarks']
+
+
 class VetRequestSerializer(serializers.ModelSerializer):
-    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
+    farmer_name = serializers.CharField(
+        source='farmer.username',
+        read_only=True
+    )
+
+    animal_type_name = serializers.CharField(
+        source='animal_type.animal_name',
+        read_only=True
+    )
 
     class Meta:
         model = VetRequest
@@ -57,3 +69,36 @@ class AboutUsSerializer(serializers.ModelSerializer):
     class Meta:
         model = AboutUs
         fields = "__all__"
+
+#news article
+class NewsArticleSerializer(serializers.ModelSerializer):
+    posted_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NewsArticle
+        fields = [
+            'id',
+            'title',
+            'description',
+            'picture',
+            'date',
+            'posted_by',
+            'created_at'
+        ]
+
+    def get_posted_by(self, obj):
+        if obj.posted_by_user:
+            return obj.posted_by_user.username
+        return obj.posted_by_name or "Admin"
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+
+        if request and request.user and request.user.is_authenticated:
+            validated_data['posted_by_user'] = request.user
+        else:
+            validated_data['posted_by_name'] = validated_data.get(
+                'posted_by_name', 'Admin'
+            )
+
+        return super().create(validated_data)
