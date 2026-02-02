@@ -11,6 +11,7 @@ from .views import (
     AboutUsViewSet,
     PasswordResetViewSet,
     NewsArticleViewSet,
+    AnimalTypeViewSet,
 )
 
 router = DefaultRouter()
@@ -19,6 +20,7 @@ router.register('vetrequest', VetRequestViewSet, basename='vetrequest')
 router.register('aboutus', AboutUsViewSet, basename='aboutus')
 router.register('passwordreset', PasswordResetViewSet, basename='passwordreset')
 router.register('news', NewsArticleViewSet, basename='news')
+router.register('animaltypes', AnimalTypeViewSet, basename='animaltypes')
 
 urlpatterns = [
     path('api/', include(router.urls)),

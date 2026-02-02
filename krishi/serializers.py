@@ -56,10 +56,38 @@ class VetRequestSerializer(serializers.ModelSerializer):
         read_only=True
     )
 
+    # accept string input
+    animal_type = serializers.CharField(write_only=True)
+
     class Meta:
         model = VetRequest
-        fields = "__all__"
+        fields = [
+            'id',
+            'farmer',
+            'farmer_name',
+            'animal_type',
+            'animal_type_name',
+            'symptoms',
+            'location',
+            'status',
+            'created_at'
+        ]
         read_only_fields = ['farmer', 'status', 'created_at']
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        animal_type_name = validated_data.pop('animal_type')
+
+        animal_type_obj, _ = AnimalType.objects.get_or_create(
+            animal_name=animal_type_name
+        )
+
+        return VetRequest.objects.create(
+            farmer=request.user,
+            animal_type=animal_type_obj,
+            **validated_data
+        )
+
 
 
 # --------------------------
@@ -102,3 +130,4 @@ class NewsArticleSerializer(serializers.ModelSerializer):
             )
 
         return super().create(validated_data)
+

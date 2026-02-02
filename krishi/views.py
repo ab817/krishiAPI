@@ -5,11 +5,11 @@ from rest_framework.response import Response
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
 
-from .models import VetRequest, AboutUs, NewsArticle
+from .models import VetRequest, AboutUs, NewsArticle, AnimalType
 from .serializers import (
     SignupSerializer,
     VetRequestSerializer,
-    AboutUsSerializer, NewsArticleSerializer
+    AboutUsSerializer, NewsArticleSerializer, AnimalTypeSerializer
 )
 from .permissions import IsAdminUserRole, IsNormalUserRole
 
@@ -136,3 +136,11 @@ class NewsArticleViewSet(viewsets.ModelViewSet):
             serializer.save(posted_by_user=user)
         else:
             serializer.save(posted_by_name="Admin")
+
+# ------------------------------------------
+# 5. Animal Type (List only)
+# ------------------------------------------
+class AnimalTypeViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = AnimalType.objects.all().order_by('animal_name')
+    serializer_class = AnimalTypeSerializer
+    permission_classes = [permissions.AllowAny]
