@@ -75,18 +75,15 @@ class VetRequestSerializer(serializers.ModelSerializer):
         read_only_fields = ['farmer', 'status', 'created_at']
 
     def create(self, validated_data):
-        request = self.context.get('request')
         animal_type_name = validated_data.pop('animal_type')
 
         animal_type_obj, _ = AnimalType.objects.get_or_create(
             animal_name=animal_type_name
         )
 
-        return VetRequest.objects.create(
-            farmer=request.user,
-            animal_type=animal_type_obj,
-            **validated_data
-        )
+        validated_data['animal_type'] = animal_type_obj
+
+        return super().create(validated_data)
 
 
 

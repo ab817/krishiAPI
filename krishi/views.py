@@ -9,7 +9,9 @@ from .models import VetRequest, AboutUs, NewsArticle, AnimalType
 from .serializers import (
     SignupSerializer,
     VetRequestSerializer,
-    AboutUsSerializer, NewsArticleSerializer, AnimalTypeSerializer
+    AboutUsSerializer,
+    NewsArticleSerializer,
+    AnimalTypeSerializer
 )
 from .permissions import IsAdminUserRole, IsNormalUserRole
 
@@ -39,6 +41,7 @@ class VetRequestViewSet(viewsets.ModelViewSet):
         # Normal → own requests
         return VetRequest.objects.filter(farmer=user)
 
+    # ✅ SINGLE SOURCE OF TRUTH FOR farmer
     def perform_create(self, serializer):
         serializer.save(farmer=self.request.user)
 
