@@ -28,26 +28,34 @@ class AnimalType(models.Model):
         return self.animal_name
 
 #vetrequest
+from django.db import models
+from django.contrib.auth.models import User
+
 class VetRequest(models.Model):
+
     STATUS_CHOICES = (
         ('pending', 'Pending'),
         ('accepted', 'Accepted'),
         ('rejected', 'Rejected'),
+        ('doctor_cancelled', 'Doctor Cancelled'),
+        ('cancelled', 'Cancelled'),
     )
 
     farmer = models.ForeignKey(
         User,
-        on_delete=models.CASCADE,
-        related_name="vet_requests"
+        related_name='farmer_requests',
+        on_delete=models.CASCADE
     )
 
-    # 🔥 CHANGED HERE
-    animal_type = models.ForeignKey(
-        AnimalType,
-        on_delete=models.PROTECT,
-        related_name='vet_requests'
+    assigned_doctor = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_requests'
     )
 
+    animal_type = models.CharField(max_length=100)
     symptoms = models.TextField()
     location = models.CharField(max_length=255)
     status = models.CharField(
@@ -55,10 +63,12 @@ class VetRequest(models.Model):
         choices=STATUS_CHOICES,
         default='pending'
     )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.farmer.username} - {self.animal_type.animal_name} - {self.status}"
+        return f"{self.id} - {self.status}"
+
 
 # ✅ DO NOT REMOVE (AS REQUESTED)
 class AboutUs(models.Model):

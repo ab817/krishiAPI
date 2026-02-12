@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
-
+from django.db import transaction
 from .models import VetRequest, AboutUs, NewsArticle, AnimalType
 from .serializers import (
     SignupSerializer,
@@ -57,29 +57,74 @@ class VetRequestViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     # Admin → accept request
-    @action(
-        detail=True,
-        methods=['post'],
-        permission_classes=[IsAuthenticated, IsAdminUserRole]
-    )
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUserRole])
     def accept(self, request, pk=None):
-        vet_request = self.get_object()
-        vet_request.status = 'accepted'
-        vet_request.save()
+
+        with transaction.atomic():
+            vet_request = VetRequest.objects.select_for_update().get(pk=pk)
+
+            if vet_request.status not in ['pending', 'rejected', 'doctor_cancelled']:
+                return Response(
+                    {"error": f"Request already {vet_request.status}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            vet_request.status = 'accepted'
+            vet_request.assigned_doctor = request.user
+            vet_request.save()
+
         return Response({"message": "Request accepted"})
 
     # Admin → reject request
-    @action(
-        detail=True,
-        methods=['post'],
-        permission_classes=[IsAuthenticated, IsAdminUserRole]
-    )
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUserRole])
     def reject(self, request, pk=None):
         vet_request = self.get_object()
+
+        if vet_request.status != 'pending':
+            return Response(
+                {"error": "Only pending requests can be rejected"},
+                status=400
+            )
+
         vet_request.status = 'rejected'
         vet_request.save()
+
         return Response({"message": "Request rejected"})
 
+# Admin → farmer cancel
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsNormalUserRole])
+    def farmer_cancel(self, request, pk=None):
+        vet_request = self.get_object()
+
+        if vet_request.farmer != request.user:
+            return Response({"error": "Not allowed"}, status=403)
+
+        if vet_request.status == 'cancelled':
+            return Response({"error": "Already cancelled"}, status=400)
+
+        vet_request.status = 'cancelled'
+        vet_request.assigned_doctor = None
+        vet_request.save()
+
+        return Response({"message": "Request cancelled permanently"})
+
+# Admin → doctor cancel
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUserRole])
+    def doctor_cancel(self, request, pk=None):
+        with transaction.atomic():
+            vet_request = VetRequest.objects.select_for_update().get(pk=pk)
+
+            if vet_request.status != 'accepted':
+                return Response({"error": "Only accepted request can be cancelled"}, status=400)
+
+            if vet_request.assigned_doctor != request.user:
+                return Response({"error": "Only assigned doctor can cancel"}, status=403)
+
+            vet_request.status = 'doctor_cancelled'
+            vet_request.assigned_doctor = None
+            vet_request.save()
+
+            return Response({"message": "Acceptance cancelled, request reopened"})
 
 # ------------------------------------------
 # 3. About Us
