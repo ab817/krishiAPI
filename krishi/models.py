@@ -2,10 +2,13 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
+# ------------------------------------------
+# USER PROFILE
+# ------------------------------------------
 class UserProfile(models.Model):
     ROLE_CHOICES = (
-        ('normal', 'Normal User'),   # Farmer
-        ('admin', 'Admin User'),     # Vet/Doctor
+        ('normal', 'Farmer'),
+        ('admin', 'Doctor'),
     )
 
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
@@ -15,33 +18,48 @@ class UserProfile(models.Model):
     def __str__(self):
         return f"{self.user.username} ({self.role})"
 
-#animaltype
+
+# ------------------------------------------
+# ANIMAL TYPE
+# ------------------------------------------
 class AnimalType(models.Model):
     animal_name = models.CharField(max_length=100, unique=True)
     remarks = models.TextField(blank=True, null=True)
 
     class Meta:
-        verbose_name = "Animal Type"
-        verbose_name_plural = "Animal Types"
+        ordering = ['animal_name']
 
     def __str__(self):
         return self.animal_name
 
-#vetrequest
+
+# ------------------------------------------
+# VET REQUEST
+# ------------------------------------------
 class VetRequest(models.Model):
+
     STATUS_CHOICES = (
         ('pending', 'Pending'),
         ('accepted', 'Accepted'),
         ('rejected', 'Rejected'),
+        ('doctor_cancelled', 'Doctor Cancelled'),
+        ('cancelled', 'Cancelled'),
     )
 
     farmer = models.ForeignKey(
         User,
-        on_delete=models.CASCADE,
-        related_name="vet_requests"
+        related_name='farmer_requests',
+        on_delete=models.CASCADE
     )
 
-    # 🔥 CHANGED HERE
+    assigned_doctor = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_requests'
+    )
+
     animal_type = models.ForeignKey(
         AnimalType,
         on_delete=models.PROTECT,
@@ -50,17 +68,64 @@ class VetRequest(models.Model):
 
     symptoms = models.TextField()
     location = models.CharField(max_length=255)
+
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
         default='pending'
     )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"{self.farmer.username} - {self.animal_type.animal_name} - {self.status}"
+    class Meta:
+        ordering = ['-created_at']
 
-# ✅ DO NOT REMOVE (AS REQUESTED)
+    def __str__(self):
+        return f"Request #{self.id} - {self.status}"
+
+
+# ------------------------------------------
+# AUDIT LOG
+# ------------------------------------------
+class VetRequestLog(models.Model):
+
+    ACTION_CHOICES = (
+        ('created', 'Created'),
+        ('accepted', 'Accepted'),
+        ('rejected', 'Rejected'),
+        ('farmer_cancelled', 'Farmer Cancelled'),
+        ('doctor_cancelled', 'Doctor Cancelled'),
+    )
+
+    vet_request = models.ForeignKey(
+        VetRequest,
+        on_delete=models.CASCADE,
+        related_name='logs'
+    )
+
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+
+    performed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True
+    )
+
+    previous_status = models.CharField(max_length=20)
+    new_status = models.CharField(max_length=20)
+
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        return f"Log {self.vet_request.id} - {self.action}"
+
+
+# ------------------------------------------
+# ABOUT US (UNCHANGED)
+# ------------------------------------------
 class AboutUs(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField()
@@ -70,7 +135,9 @@ class AboutUs(models.Model):
         return self.title
 
 
-#news article
+# ------------------------------------------
+# NEWS ARTICLE (UNCHANGED)
+# ------------------------------------------
 class NewsArticle(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField()
@@ -84,11 +151,11 @@ class NewsArticle(models.Model):
         blank=True,
         related_name='news_articles'
     )
+
     posted_by_name = models.CharField(
         max_length=150,
         blank=True,
-        null=True,
-        help_text="Used when article is not posted by admin user"
+        null=True
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

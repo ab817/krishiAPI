@@ -1,18 +1,11 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import (
-    VetRequest,
-    AnimalType,
-    VetRequestLog,
-    AboutUs,
-    NewsArticle,
-    UserProfile
-)
+from .models import VetRequest, AboutUs, UserProfile, NewsArticle, AnimalType
 
 
-# ------------------------------------------
-# SIGNUP
-# ------------------------------------------
+# --------------------------
+# Signup Serializer
+# --------------------------
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     mobile_number = serializers.CharField(write_only=True)
@@ -31,57 +24,40 @@ class SignupSerializer(serializers.ModelSerializer):
         mobile = validated_data.pop('mobile_number')
         role = validated_data.pop('role')
 
-        user = User.objects.create_user(**validated_data)
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email'),
+            password=validated_data['password']
+        )
 
         UserProfile.objects.create(
             user=user,
             mobile_number=mobile,
             role=role
         )
-
         return user
 
 
-# ------------------------------------------
-# ANIMAL TYPE
-# ------------------------------------------
+#Vetrequests
 class AnimalTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = AnimalType
         fields = ['id', 'animal_name', 'remarks']
 
 
-# ------------------------------------------
-# VET REQUEST LOG
-# ------------------------------------------
-class VetRequestLogSerializer(serializers.ModelSerializer):
-    performed_by_name = serializers.CharField(
-        source='performed_by.username',
+class VetRequestSerializer(serializers.ModelSerializer):
+    farmer_name = serializers.CharField(
+        source='farmer.username',
         read_only=True
     )
 
-    class Meta:
-        model = VetRequestLog
-        fields = [
-            'id',
-            'action',
-            'performed_by_name',
-            'previous_status',
-            'new_status',
-            'timestamp'
-        ]
+    animal_type_name = serializers.CharField(
+        source='animal_type.animal_name',
+        read_only=True
+    )
 
-
-# ------------------------------------------
-# VET REQUEST
-# ------------------------------------------
-class VetRequestSerializer(serializers.ModelSerializer):
-
-    farmer_name = serializers.CharField(source='farmer.username', read_only=True)
-    assigned_doctor_name = serializers.CharField(source='assigned_doctor.username', read_only=True)
-    animal_type_name = serializers.CharField(source='animal_type.animal_name', read_only=True)
-
-    logs = VetRequestLogSerializer(many=True, read_only=True)
+    # accept string input
+    animal_type = serializers.CharField(write_only=True)
 
     class Meta:
         model = VetRequest
@@ -89,36 +65,37 @@ class VetRequestSerializer(serializers.ModelSerializer):
             'id',
             'farmer',
             'farmer_name',
-            'assigned_doctor',
-            'assigned_doctor_name',
             'animal_type',
             'animal_type_name',
             'symptoms',
             'location',
             'status',
-            'created_at',
-            'logs'
-        ]
-        read_only_fields = [
-            'farmer',
-            'assigned_doctor',
-            'status',
             'created_at'
         ]
+        read_only_fields = ['farmer', 'status', 'created_at']
+
+    def create(self, validated_data):
+        animal_type_name = validated_data.pop('animal_type')
+
+        animal_type_obj, _ = AnimalType.objects.get_or_create(
+            animal_name=animal_type_name
+        )
+
+        validated_data['animal_type'] = animal_type_obj
+
+        return super().create(validated_data)
 
 
-# ------------------------------------------
-# ABOUT US
-# ------------------------------------------
+
+# --------------------------
+# About Us Serializer
+# --------------------------
 class AboutUsSerializer(serializers.ModelSerializer):
     class Meta:
         model = AboutUs
         fields = "__all__"
 
-
-# ------------------------------------------
-# NEWS ARTICLE
-# ------------------------------------------
+#news article
 class NewsArticleSerializer(serializers.ModelSerializer):
     posted_by = serializers.SerializerMethodField()
 
@@ -138,3 +115,16 @@ class NewsArticleSerializer(serializers.ModelSerializer):
         if obj.posted_by_user:
             return obj.posted_by_user.username
         return obj.posted_by_name or "Admin"
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+
+        if request and request.user and request.user.is_authenticated:
+            validated_data['posted_by_user'] = request.user
+        else:
+            validated_data['posted_by_name'] = validated_data.get(
+                'posted_by_name', 'Admin'
+            )
+
+        return super().create(validated_data)
+

@@ -1,23 +1,33 @@
-from rest_framework import viewsets, status, generics, permissions
+from rest_framework import viewsets, status, permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.contrib.auth.models import User
-from django.core.mail import send_mail
-
-from .models import VetRequest, AboutUs, NewsArticle, AnimalType
+from django.db import transaction
+from .models import (
+    VetRequest,
+    AnimalType,
+    VetRequestLog,
+    AboutUs,
+    NewsArticle
+)
 from .serializers import (
-    SignupSerializer,
     VetRequestSerializer,
+    AnimalTypeSerializer,
     AboutUsSerializer,
     NewsArticleSerializer,
-    AnimalTypeSerializer
+    SignupSerializer
 )
 from .permissions import IsAdminUserRole, IsNormalUserRole
+from rest_framework.viewsets import ViewSet
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
+from django.core.mail import send_mail
+from django.contrib.auth.models import User
 
 
 # ------------------------------------------
-# 1. Signup
+# SIGNUP
 # ------------------------------------------
 class SignupViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -25,7 +35,7 @@ class SignupViewSet(viewsets.ModelViewSet):
 
 
 # ------------------------------------------
-# 2. Vet Request
+# VET REQUEST
 # ------------------------------------------
 class VetRequestViewSet(viewsets.ModelViewSet):
     serializer_class = VetRequestSerializer
@@ -33,70 +43,170 @@ class VetRequestViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-
-        # Admin → all requests
         if user.profile.role == 'admin':
             return VetRequest.objects.all()
-
-        # Normal → own requests
         return VetRequest.objects.filter(farmer=user)
 
-    # ✅ SINGLE SOURCE OF TRUTH FOR farmer
     def perform_create(self, serializer):
-        serializer.save(farmer=self.request.user)
+        vet_request = serializer.save(farmer=self.request.user)
 
-    # Normal user → view own requests
-    @action(
-        detail=False,
-        methods=['get'],
-        permission_classes=[IsAuthenticated, IsNormalUserRole]
-    )
-    def myrequests(self, request):
-        qs = VetRequest.objects.filter(farmer=request.user)
-        serializer = self.get_serializer(qs, many=True)
-        return Response(serializer.data)
+        VetRequestLog.objects.create(
+            vet_request=vet_request,
+            action='created',
+            performed_by=self.request.user,
+            previous_status='none',
+            new_status='pending'
+        )
 
-    # Admin → accept request
-    @action(
-        detail=True,
-        methods=['post'],
-        permission_classes=[IsAuthenticated, IsAdminUserRole]
-    )
+    # ACCEPT
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUserRole])
     def accept(self, request, pk=None):
-        vet_request = self.get_object()
-        vet_request.status = 'accepted'
-        vet_request.save()
+
+        with transaction.atomic():
+            vet_request = VetRequest.objects.select_for_update().get(pk=pk)
+
+            if vet_request.status not in ['pending', 'doctor_cancelled']:
+                return Response({"error": "Cannot accept this request"}, status=400)
+
+            old_status = vet_request.status
+
+            vet_request.status = 'accepted'
+            vet_request.assigned_doctor = request.user
+            vet_request.save()
+
+            VetRequestLog.objects.create(
+                vet_request=vet_request,
+                action='accepted',
+                performed_by=request.user,
+                previous_status=old_status,
+                new_status='accepted'
+            )
+
         return Response({"message": "Request accepted"})
 
-    # Admin → reject request
-    @action(
-        detail=True,
-        methods=['post'],
-        permission_classes=[IsAuthenticated, IsAdminUserRole]
-    )
+    # REJECT
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUserRole])
     def reject(self, request, pk=None):
+
         vet_request = self.get_object()
+
+        if vet_request.status != 'pending':
+            return Response({"error": "Only pending requests can be rejected"}, status=400)
+
+        old_status = vet_request.status
         vet_request.status = 'rejected'
         vet_request.save()
+
+        VetRequestLog.objects.create(
+            vet_request=vet_request,
+            action='rejected',
+            performed_by=request.user,
+            previous_status=old_status,
+            new_status='rejected'
+        )
+
         return Response({"message": "Request rejected"})
+
+    # FARMER CANCEL
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsNormalUserRole])
+    def farmer_cancel(self, request, pk=None):
+
+        vet_request = self.get_object()
+
+        if vet_request.farmer != request.user:
+            return Response({"error": "Not allowed"}, status=403)
+
+        if vet_request.status != 'pending':
+            return Response({"error": "Only pending requests can be cancelled"}, status=400)
+
+        old_status = vet_request.status
+        vet_request.status = 'cancelled'
+        vet_request.save()
+
+        VetRequestLog.objects.create(
+            vet_request=vet_request,
+            action='farmer_cancelled',
+            performed_by=request.user,
+            previous_status=old_status,
+            new_status='cancelled'
+        )
+
+        return Response({"message": "Request cancelled successfully"})
+
+    # DOCTOR CANCEL
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsAdminUserRole])
+    def doctor_cancel(self, request, pk=None):
+
+        with transaction.atomic():
+            vet_request = VetRequest.objects.select_for_update().get(pk=pk)
+
+            if vet_request.status != 'accepted':
+                return Response({"error": "Only accepted requests can be cancelled"}, status=400)
+
+            if vet_request.assigned_doctor != request.user:
+                return Response({"error": "Only assigned doctor can cancel"}, status=403)
+
+            old_status = vet_request.status
+
+            vet_request.status = 'doctor_cancelled'
+            vet_request.assigned_doctor = None
+            vet_request.save()
+
+            VetRequestLog.objects.create(
+                vet_request=vet_request,
+                action='doctor_cancelled',
+                performed_by=request.user,
+                previous_status=old_status,
+                new_status='doctor_cancelled'
+            )
+
+        return Response({"message": "Acceptance cancelled. Request reopened."})
 
 
 # ------------------------------------------
-# 3. About Us
+# ANIMAL TYPE
+# ------------------------------------------
+class AnimalTypeViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = AnimalType.objects.all()
+    serializer_class = AnimalTypeSerializer
+    permission_classes = [permissions.AllowAny]
+
+
+# ------------------------------------------
+# ABOUT US
 # ------------------------------------------
 class AboutUsViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = AboutUs.objects.all()
     serializer_class = AboutUsSerializer
+    permission_classes = [permissions.AllowAny]
 
 
 # ------------------------------------------
-# 4. Password Reset via Email
+# NEWS
 # ------------------------------------------
-from django.contrib.auth.tokens import default_token_generator
-from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
+class NewsArticleViewSet(viewsets.ModelViewSet):
+    queryset = NewsArticle.objects.all().order_by('-date')
+    serializer_class = NewsArticleSerializer
 
-class PasswordResetViewSet(viewsets.ViewSet):
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.AllowAny()]
+        return [permissions.IsAdminUser()]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if user.is_authenticated:
+            serializer.save(posted_by_user=user)
+        else:
+            serializer.save(posted_by_name="Admin")
+
+
+# ------------------------------------------
+# PASSWORD RESET
+
+
+
+class PasswordResetViewSet(ViewSet):
 
     @action(detail=False, methods=['post'])
     def send_reset_email(self, request):
@@ -115,35 +225,8 @@ class PasswordResetViewSet(viewsets.ViewSet):
                 from_email="noreply@krishi.com",
                 recipient_list=[email],
             )
+
             return Response({"message": "Password reset link sent!"})
 
         except User.DoesNotExist:
             return Response({"error": "Email not found"}, status=404)
-
-#newsarticle
-
-class NewsArticleViewSet(viewsets.ModelViewSet):
-    queryset = NewsArticle.objects.all().order_by('-date')
-    serializer_class = NewsArticleSerializer
-
-    def get_permissions(self):
-        # Anyone can view news
-        if self.action in ['list', 'retrieve']:
-            return [permissions.AllowAny()]
-        # Only admin can create/update/delete
-        return [permissions.IsAdminUser()]
-
-    def perform_create(self, serializer):
-        user = self.request.user
-        if user.is_authenticated:
-            serializer.save(posted_by_user=user)
-        else:
-            serializer.save(posted_by_name="Admin")
-
-# ------------------------------------------
-# 5. Animal Type (List only)
-# ------------------------------------------
-class AnimalTypeViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = AnimalType.objects.all().order_by('animal_name')
-    serializer_class = AnimalTypeSerializer
-    permission_classes = [permissions.AllowAny]
